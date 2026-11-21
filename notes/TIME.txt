@@ -1,0 +1,89 @@
+It’s TIME: Towards the Next Generation of Time Series Forecasting Benchmarks
+
+ABSTRACT:
+TSFMs are revolutionizing forecasting from specific dataset modeling to generalizable eval.
+Existing benchmarks have 4 limitations: 1) constrained data composition by reused sources, 2) compromised data integrity, 3) misaligned task formulations detached from real world context, and 4) rigid analysis perspective.
+To bridge these gaps, TIME is introduced. TIME has 50 fesh datasets and 98 forecasting tasks, tailored for strict zero-shot TSFM evaluation, free from data leakage.
+datasets are made using LLMs and human-in-loop framework.
+A novel pattern-level evaluation perspective is proposed. 12 TSFMs are evaluated.
+
+INTRO
+TSFMs have reshaped the evaluation landscape of time series forecasting, shifting the focus from dataset-centric regime (models are trained and assessed within individual datasets), to task-centric regime,
+that places importance on zero-shot eval and generalization across forecasting tasks. This has also exposed fundamental insufficiences in widely adopted TSF benchmarks. Recent studies have revealed critical limitations, like questionable data forecastability and misaligned eval protocols.
+In response, recent works have tried to develop TSF benchmarks to aim to move beyond traditional dataset-centric eval.
+
+A central challenge remains "how can TSF benchmarking be fundamentally reoriented towards task-centric eval focus required by TSFMs"
+4 critical dimensions:
+1) Legacy constrained data coverage -> data composition of modern benchmarks remains constrained by Legacy datasets. Risk of data leakage.
+2) compromised data integrity -> QA procedures are overlooked in dataset curation, including poor quality variates with extreme outliers or excessive missing values.
+3) misaligned task formulations -> classic benchmarks use fixed prediction lengths, such as 720 steps, across all datasets. This ignores the fact that valid forecasting horizon depends on specific application scenario and data frequency.
+4) limited analysis perspective -> current eval categorize daatsets by rigid meta labels and aggregate dataset-level results as performance indicators. Basically macro level insights and not more specific insights.
+
+time-series error metrics like MSE or MASE only provide a scalar measurement of prediction error.
+Numerical improvment in these metrics does not guarantee that the model accurately captures temporal behaviours or that its predictions are reliable.
+
+To bridge these gaps, TIME is introduced, a TSF Benchmark.
+A diverse collection of fresh datasets from public sources or industry partners is curated, which have never/rarely been explored by Existing TSF benchmarks. To ensure data integrity, a human-in-the-loop data prep pipeline is used.
+The forecasting task is decided keeping in mind that the horizons and frequency adhere to real-world operational requirements.
+
+Using STL decompositon, each series is broken into features such as trend, seasonality, remainder, and using binary encoding(eg trend strong, trend weak), group the datasets into similar sets.
+So a model is tested not only on the MASE/MAE, but also on things like trend etc.
+"Model A handles strong seasonality well but struggles with trending series."
+
+Preliminary
+Time series forecasting benchmarks: A TSF benchmark serves as a unified platform for evaluating forecasting methods.
+Some formalizations:
+
+1) A Benchmark comprises multiple tasks that share a common evaluation protocol and provides multiple perspective of analysis.
+2) A Task is defined by a specific dataset together with a dedicated prediction horizon.
+3) A dataset contains one or more series, and the same underlying data sampled at different frequencies should be treated as distinct datasets.
+4) A series can be mutlivariate or univariate, series in same dataset may vary in temporal length but share the same set of variables.
+5) A variate represents a single time-dependent variable.
+6) testing window -> horizon.
+
+forecasting samples are generated using a non-overlapping rolling window strategy.
+
+Time series pattern -> denotes the intrinsic temporal characteristicsof a single variate. For a variable x of a dataset, they make the encoded vector of characteristics like trend, seasonality, remainder. 
+
+4. Benchmark construction
+dataset curation -> as Legacy datasets likely have been partially ingested into large-scale pre-training corpora, this causes contamination.
+This paper aggregates data from four primary sources: goverment, industry + acad partners, open-access repo and forecasting competitions.
+
+manual curation -> verify that the data is continuous, valid timestamps, regular sampling frequency, meta-data based filtering. Aggregating variates into one or univariate data.
+
+5.1 Structural tsfeatures for pattern definition
+x (variate) = T + S + R (trend, seasonality, remainder)
+For trend T, 2 features -> trend strength (F1) quantifies the proportion of the variate's variability explained by trend.
+Trend linearity (F2) captures the structural evolution of tremd, basically trying to quantify the degree of linear progression.
+
+For Seasonality S, Seasonality strength (F3) similar to trend strength. (F4) is Seasonality correlation, denoting linear correlation between consecutive seasonal cycles, reflecting stability.
+For remainder R, Residual ACF-1 (F5) capture residual dependencies by calculating first order auto-correlation of the remainder term.
+
+Finally, two additional features on the variate x, one is Complexity (F6, spectral entropy of X) and Stationarity (F7), binary indicatot derived from ADF test.
+
+5.2 Pattern-driven benchmarking
+pattern-driven strategy to stratify benchmark and identify variates with shared characteristics. Binary encoding scheme to transform the feature vector F = [F1,.....,F7] (eg: (0, 1, 0, 1, 0, 0, 1)). Feature vector F for every variate in the benchmark.
+for each vector, we calculate the population median Fk across all variates to serve as a global threshold. If the feature value of a variate exceeds this threshold (FK[variate] > Fk[median]), we consider variate to possess a strong or dominant presence of that characteristic (encoded as 1), else 0. F7 is directly adopted without thresholding.
+
+Each model is run on each variate, and then per dataset, variate scores (MASE and CRPS) are averaged across variates to get a simple score. 
+Variates from different sets are aggregated on the bassi on the feature vectors.
+
+6 Experiments
+12 models (TimesFM, Moirai, Chronos, Toto, Sundial, VisionTS++, Kairos, TiRex families).
+50 datasets, 98 tasks, 8 domains.
+
+Evaluation protocol -> rolling evaluation protocol. MASE and CRPS for point and probabilistic evaluation respectively.
+Some TSFMs have different output formats (quantile vs distribution based). For distribution based, we derive quantiles via sampling, using default sample size of 100.
+
+metric normalization and aggregation -> normalization of metrics (metric_model_variate) / (metric_S-NAIVE_variate).
+Also geometric mean is used to aggregate these normalized metrics across units. 
+
+Performance:
+task level -> (dataset, horizon).
+normalization unit is task itself: compute raw metrics for a task (averaged across rolling windows, variates and series), normalize them by corresponding S-Naive task score and then aggregate these normalized scores across all 98 tasks using geometric mean.
+
+Top 3 performers are TimeFM-2.5, Chronos-2 and TiRex, with lowest MASE and CRPS scores.
+
+Trend -> most models perform better on datasets that has a trend. similar for trend linearity.
+Seasonality -> strong models capture strong seasonal signals, weak models cannot. In terms of seasonality correlation, weaker models perform similar to S-Naive on stable, on unstable gap is big. Newer models show small performance difference in stable/unstable data.
+Stationarity -> relative gains are more pronounced on non-Stationary data. Also, different TSFMs possess unique inductive bias, some optimized for non-stationary, so for stationary dynamics.

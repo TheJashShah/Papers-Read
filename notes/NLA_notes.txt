@@ -1,0 +1,214 @@
+ABSTRACT:
+
+Neuron level analysis to identify neurons that drive cultural behaviour.
+Gradient-based scoring method with additional filtering.
+Culture-general and culture-specific neurons account for < 1% of all neurons and concentrated in shallow to middle MLP layers.
+Supressing them degrades performance on benchmarks by 30%, but perf. on general NLU benchmarks remains largely unaffected.
+
+Culture-specific neurons support knowledge of both the target culture and related cultures.
+
+Fine-tuning on NLU benchmarks diminishes LLMs cultural understanding.
+
+INTRO:
+previous studies have used neuron-level analysis(NLA) for social bias and personality.
+
+(Ying 2025) -> neurons activated most strongly when prompt language aligns with cultural content.
+(Namazifard) -> distangling culture neurons from language neurons.
+
+these studies examine culture in relation to language, but not LLM behaviour based on cultural info.
+These rely on activation-based methods. Can be imprecise because cultural relevant text encoding -> not necessarily cultural information and representation.
+basically, correlation is not causation, activation-based is easy to start with, can use than causal methods, circuit-level analysis, weight-based analysis.
+
+research questions:
+1. existence and distribution of culture-general neurons contributing to cultural understanding across cultures.
+2. difference of cultural-specific neurons and correlation bw these and cultural correlation
+3. potential engineering applications of this NLA.
+
+I think:
+culture-general -> neurons that represent culture, any culture, but these arent maths or science or language specific, these are culture specific.
+culture-specific -> neurons representing one specific culture.
+
+Interpretation of cultural understanding along 2 dimensions:
+1. knowledge specific to one culture.
+2. ability to capture differences in values across diverse cultural backgrounds.
+
+CULNIG -> pipeline (uses gradient based scoring.)
+quanitfy contribution of each nueron to the output, excludes neurons associated with task understaning.
+CountryRC dataset is used to filter out neurons that are irrelevant to cultural understanding.
+
+Basically a cultural question is asked,
+eg (What is a common snack for preschool kids in UK, choose from 4 options (question taken from paper))
+Then in BLENDnuer, each neuron gets a score based on gradient attribution score = (n * dP(y | x)/dn) meaning how much that neuron changes the chance of correct ans.
+BLENDctrl, question content is removed, s is calculated same way.
+
+s_neur - s_ctrl and keep top t% neurons.
+using CRC, they remove neurons associated wwith country names (for words like Spain, England etc). -> top r%
+
+so final cultural general = top t% - top r%/
+
+[x -> question, y -> output. P(y | x) -> pobability of y given x, n => activation value of neuron]
+
+related work:
+benchmarks:
+1. BLEnD -> 16 cultures, 6 categories, multilingual short answer questions and English MCQS.
+2. CulturalBench -> MCQ, 45 countries.
+3. NormAD -> question in the form of: Is this behaviour accepted in target country.
+4. WorldValueBench -> prediction task of survey responsed based on demographic attributes.
+
+5. Cultural-Linguistic-Synergy -> phenomenon where peformance of LLMs on cultural benchmarks improves when language agrees with cultural content(basically for Indian cultural question, hindi prompt language)
+But this is not always true for low resource languages, (eg -> Latin, or a Regional language).
+
+One question:
+if language is latin, but its culture, ancient and Medevial Rome is still very prevelant in training data, so will a latin language for a latin culture, despite being low resource, work?
+
+Neuron analysis:
+1. Dai (2022) -> gradient based method for neuron identification for factual recall in BERT.
+2. Chen (2025) -> query-relevant neurons for question answering.
+3. Yang (2024) -> bias neurons and mitigated bias by pruning them.
+
+4. Tang, Kojima, Ying, Namazifard -> activation based.
+
+Activation based only consider positive activations but even negative ones encode useful info.
+culture not expressed in every token, unlike language.
+
+Methods:
+
+In transformers, two types of neurons are present -> MLP and attention.
+This paper decomposes each type of neuron into subvalues.
+
+for MLP neurons -> key-value decomposition.
+Key -> when neuron should be activated.
+Value -> what neuron adds to the hidden state when activated.
+
+for Attention -> query, key, value vector decompositon.
+
+P(y | x) -> probability of output y when input = x.
+
+now for neuron, lth layer, kth neuron and ith token,
+score(l, k, i)(x, y) = n(l, k, i) * DP(y | x)/Dn(l, k, i)
+
+this signifies how active neuron is and how sensitive output probability is to that neuron.
+so If neuron fires strongly and changing it highly changes answer prob -> its an important neuron.
+
+this score is attribution score.
+max score is taken for all tokens that is i from 1....n(n = no. of tokens)
+
+Question: what if a neuron achieves max score on a token like "the", "hello", etc, basically -> stop words.
+There can be another score for just stop words and then remove them too.
+
+Taylor approximation formula, I havent quite understood it, but its a formula for how probability changes when neuron activation changes from average value to some other value.
+So we can calculate score of a neuron in one pass efficiently.
+
+Causal effect -> How much worse would answer get if the neuron is masked.
+
+Aggregate formula -> For a dataset with Q questions, we aggregate the sum as some neurons are important throughtout the dataset.
+
+MCQS from BLEnD is used. Blend is categorized into (food, work-life, sport) for neuron identification, and (education, family, holidays/celeberations) for eval (BLEnD[test]).
+BLEnD = 500 questions.
+this paper samples upto  5 instances per question, so ~12700 in BLENDnuer and ~10300 in test.
+
+BLENDctrl I think is same as BLENDnuer but question content is removed. Scores = score(neur) - score(ctrl), so neurons with just task understanding are elmiminated.
+CRC dataset is used (correct ans is always a country.)
+
+for culture general,
+top t% of score(neur) - score(ctrl) and then excluding top r% by score(CRC), so neurons activated due to countries are gone.
+
+for culture specific,
+score is calculated same way, then z-score of each nueron over 16 countries is calc, using standard dev and mean of score of a neuron across countries.
+neurons with z-score < 0.5 are removed, as they are likely to contribute to culture just generally.
+
+Models used:
+Gemma 27B.
+Qwen 14B.
+LLama 8B.
+Phi-4 (14B).
+Falcon 10B.
+
+so finally, BLENDnuer, BLENDctrl, CRC for neuron identification, and then BLEnDtest and CulturalBench(CUltB) to measure cultural knowledge.
+
+metrics =  accuracy for all benchmarks accepted WVB, for WVB, score = sum from 1 to N of (1 - abs(a - p)/max distance) * 100
+a - majority ans among all participants from country c, p = model prediction and max distance = max possible distance between options and a_of_c.
+higher score = stronger alignment.
+
+neurons selection happens in gemma 12B, t% is varied, and r% (for country neurons is fixed to 1%).
+Masking NLP neurons degrades performance in cultural benchmarks, but NLU benchmarks remain unaffected.
+beyond t = 1%, degradation diminishes, so only 1% MLP neurons are important. (My opinion).
+
+LLMs rely more heavily on MLP neurons for cultural benchmarks -> paper statement.
+t%(MLP) = 1%, t(attn) = 0.2% this is for CULNIG general.
+CULNIG specific no seperation is made for MLP and attention based neurons. (becaue z-score should remove neurons, both mlp and attention)
+
+
+Table 2:
+t = 0.3%, r = 1%,
+
+two types of maskings:
+1. random maskings.
+2. Cultural maskings.
+
+random masking barely changes scores (on cultural)
+cultural neurons definitely degrades performance.
+
+consistent across all models.
+
+Figure 3 shows most culture-general are located in shallow to middle MLP modules(layers), consistent for all models.
+
+for culture-specific,
+8 countries -> Chine, Indonesia, Iran, Mexico, South Korea, Spain, UK, USA.
+masking cultural specific neurons, biggest degradation is seen in the target culture (expected).
+
+culture-specific also affect related cultures a bit. This is also expected a bit, but is relation between geographically or religion-associated cultures? or language?
+
+Mexico and Spain related(masking mexico affected spain)
+ok the paper answers this, geographically related cultures tend to afffect each other.
+
+distribution of culture-specific and cultural-general is similar.
+CAPE reported that culture neurons are concentrated on upper layers.
+This paper says they tried to reproduce CAPE and LAPE results but could not, and that CAPE and LAPE had negligible impacts on eval.
+So activation based methods do not work to localise neurons.
+CAPE does use perplexity as a metric, as compared to accuracy for this paper.
+
+instance-level analysis of nueron scores
+
+Authors propose a question,
+"Do these neurons encode meta-level control signals for cultural contexts or knowledge-level
+concepts?"
+Basically means -> are these neurons deciding how to act based on the cultural context? or they just storing words/facts/training data?
+
+Authors plot the scores of BlendNeur where model assigns scores > 0.5
+Authors suggest if the neuron encodes meta-level control signals, it should have high scores on most instances.
+
+in the figure, they plot scores of a single nueron of gemma per instance in BLEnD(neur). (instance = one question)
+
+Neuron is active only 29% of instances, so a single neuron does not fire for all cultural questions.
+This alone suggests to me that neurons do store some info/word, thye dont react to every cultural word, only some.
+
+Same goes for culture specific neurons, the neuron activates for only 38% of Iran questions, but it also shows a high reaction for Azerbaijan, so that neuron stores something common to both Iran and Azerbaijan.
+
+They also use NormADneur and test and mask nuerons using the same formulae, and neuron with high scores for BlendNeur score high on NormADtest even if they score less on NormADneur, so neurons do encode some general level facts and are not simply reacting to a particular word.
+
+
+Application:
+Potential applications from this paper's findings:
+
+Implementation detail:
+If they select an MLP gate projection, they also include its corresponding up/down projections.
+If they select attention q/k/v modules, they include related q/k/v/out projections.
+
+two types of modules are fine tuned:
+1. Those that have the most culture general neurons.
+2. Those that contain few/none culture general neurons.
+
+Im guessing modules mean layers here.
+Gemma is finetuned and only 10% params are updated.
+
+QLNI and MRPC are NLU benchmarks.
+
+So in training, performance for QLNI and MRPC increases.
+But for cultural benchmarks, top modules suffer a large drop, as compared to the bottom modules.
+
+Updating Top modules causes a larger drop on cultural benchmarks.
+Updating Bottom modules preserves cultural ability better.
+
+Interesting thing -> all models have a very similar number of culture-specific neurons. You would think that western or even chinese representation would be more but that isnt the case.
+

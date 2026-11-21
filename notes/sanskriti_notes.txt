@@ -1,0 +1,125 @@
+Sanskriti -> Benchmark for evaluating LLM on Indian culture
+
+Sanskriti has ~21000 qa pairs spanning all states and union territories.
+Covers rituals, ceremonies, history, tourism, cuisine, dance, music, costume,
+language, art, festivals, religion, medicine, transport, sports, nightlife, personalities.
+
+Benchmark is evaluated on LLMs (>= 7B params), ILMs (Indic Language Models -> developed in India), SLMs(Small language models <= 5B params).
+
+Disparities are noted in ability to handle culturally nuanced queries, stuggle in region specific contexts.
+
+Challenge:
+Ensuring LMs cater to diverse populations by recognizing and reasoning about linguistic and cultural contexts.
+
+India's cultural richness present a challengge for the LMs. 
+Existing Benchmarks are TyDi QA, XQUAD. These focus more on multilingualism overlooking cultural depth.
+
+Some Existing datasets do not include all Indian states and union territories.
+Sanskriti focuses across all states and union territories.
+
+Research Questions:
+1. How do various language models perform on Sanskriti dataset, and what is the performance trend across these model categories?
+2. How does a model perform across different cultural attributes represented in the dataset?
+3. Performance trend across states and UT?
+4. Performance across various question types in the dataset?
+
+Related Work:
+1. Tools like World Values Survey and Hofstede's dimensions to evaluate LLMs understandings of social norms and human values.
+2. Other works explored cultural artifacts, such as food and art.
+3. Gaps in non-Western cultures and persistent biases.
+4. Fine tuning to instill social norms and enhance performance on culture-specific tasks like hate speech detection, but regional languages underperforms compared to monolingual English testing.
+
+NLP for Indian languages:
+1. IndicGenBench -> multingual benchmark for 29 indic languages to evaluate generation capabilities across scripts and language families.
+Basically its a test set used to check how well AI can generate text in 29 languages with different scripts and language groups.
+2. MuRIL -> language model specifically designed for indian languages, handles transliterated (नमस्ते → Namaste) and code-mixed text found informally.
+3. LoFTI benchmark -> benchmark for LLM eval to provide localized and factual response to Indian contexts.
+4. Some work has been done on translation capabilities of LLM between English and 22 Indian languages. through fine tuning and context learning.
+
+Dataset collection sources:
+1. Wikipedia
+2. Ritiriwaz
+3. Holidify
+4. Artsandculture
+5. TimesofIndia
+
+Question types:
+1. Association Prediction -> Identify culture.
+2. Country Prediction -> Determine country.
+3. General Awareness Prediction -> Formulate factual questions.
+4. State Prediction -> Identify state.
+
+Distribution:
+almost equal distribution. 
+Country -> 5563
+Association -> 5454
+General awareness -> 5450
+State -> 5387
+
+Most questions are from Telangana and Karnataka, least from Maharastra, J&K, and the northeast states.
+Range is 1600 to 200.
+
+Attribute-wise count:
+Tourism (~3800) > History (~2600) > Festivals (~2200) > Cuisine > Art > Dance and Music > Costume > Cultural common > Rituals > Personalities > Language > Religion (~500) > Sports > Transport > Medicine > nightlife
+
+Models used:
+1. Mistral-7B-Instruct
+2. LLAMA-3.1-70B-Instruct
+3. Qwen-2.5-72B-Instruct
+4. Phi3-medium-4k-instruct
+5. Gemma-2B-Instruct
+6. Qwen2-1.5B-Instruct
+7. LLAMA-3.2-3B-Instruct
+8. SmmolLM-1.7B-Instruct
+
+Indic:
+Navrasa-2.0
+OpenHathi-Instruct
+
+GPT-40 for comparison.
+
+Zero shot evalution. (Basically just a prompt without a prior example.)
+
+(for interpretibility, we can test against zero, one and few shot. [ablation])
+
+All questions are MCQs, 
+metric is accuracy.
+
+Open source models were run using 16-bit floating point precision with greedy decoding during inference.
+(This means open source models generated answers using half precision numbers (FP16) to save time and mem, and chose single most likely next token at each step at, rather than sampling alternatives.)
+[This is also an interesting decision for interp setup, as this can maybe change the neuron level activation of a model, so an ablation is possible here too.]
+
+Propietary models -> output probs for each option, and option with highest prob was selected.
+
+Results:
+GPT-40 performed the best (expected.)
+LLAMA 70B best among the open source models.
+
+Country > GK > Association > State across all models in terms of average accuracy.
+
+Interesting thing I see is that Mistral performs twice as better as OpenHathi (indic model), both have ~7B params.
+If we see parameter wise, Even though Mistral has 7B params, it only has a relatively worse performance than LLama 70B, openai, Qwen 72B, and Phi3 14B.
+
+Navrasa (also ILM), has the worst performance.
+So, is Param count more important than training data distribution?
+
+
+performance of all models was high for religion, medicine, cultural common sense.
+For attributes  like costumes, cuisines, and art, the models struggled.
+Some trends specific to certain LLMs, like Gemma dropped significantly for sports compared to other LMs.
+
+Language models also stuggled with questions pertaining to north-eastern states like Sikkim, Arunachal Pradesh, Tripura. Poor performance also on Bihar, Jharkhand.
+Good performance for Delhi, Maharastra.
+
+Highest accuracy achieved on GK-based questions, State prediction got lowest accuracy. GPT-4 top performing model which is expected, LLAMA-70B outperforms all other local models.
+Qwen(1.5B) performs almost at par with GPT, on country.
+
+Error analysis on GPT is done grouping correct and incorrect into 2 sets. Correct answers have questions which have a clear objective answer, and strong semantic Association bw keywords and options. Basically unambiguous.
+Incorrect answer questions have nuanced opinions and a not a clearly correct answer, Basically a very culturally-specific question that requires some presence in training data.
+
+Limitations:
+1. Could not cover all cultural attributes.
+2. Lack of multilingual queries.
+3. Absence of visual question-answering tasks.  
+4. Some questions are unambiguous in that the context doesnt clearly associate with only India, some other cultures too.
+5. Only MCQs, no other types that require causal understandings.

@@ -1,0 +1,132 @@
+Decoupling Internal Representational Changes and Causal Importance in
+Fine-Tuned Large Language Models
+
+Abstract:
+fine-tuning is widely adopted approach for adapting LLMs to numerous downstream tasks.
+However, how FT reshapes a Model's internal mechanism remains poorly understood.
+This paper does that, they see attention patterns, layer-wise activations, and see if this changes are linked to task-relevant components
+indentified by Edge Attribution Patching (EAP) (eg: attention heads and logit-level activations) that drive task performance.
+They find that EAP indentified components are concentrated in specific layers, also overlap in EAP indentified components across tasks does not mean cross-task performance transfer, if tasks are different in nature.
+FT on one task can lead to a degradation of performance on another when the two exhibit a high degree of overlap.
+
+Introduction:
+FT is widely used across various domains, but the understanding of how model-level Representational changes relate to underlying EAP components (embedding nodes, attention heafs, logit nodes) remains limited.
+this paper studies layer-wise attention patterns and Representational-level changes before and after FT. A causal Attribution-based approach is used. Primary objective is to investigate whether the layer undergoing maximum Representational change is also similar to layer having highest contribution to EAP components.
+
+FT across 3 tasks is done: 1) Sentimental Classification, 2) Machine Translation, 3) Question-Answering.
+For each task, 2 datasets. Models used: GPT-2 Small (124 M), LLama-3.2-1B, Qwen2-0.5B and LLama-2-7B. (No Instruct models are used.)
+Different kinds of tasks have similar and different causally relevent components. 
+
+Methodology:
+
+Quantifying Model-level changes:
+focus on attention patterns and Representational-level changes.
+attention patterns -> how model routes information across tokens, reflecting dependency structure and contextual reasoning.
+representational-level analysis -> how FT alters geometry of model's internal feature space, which encodes semantic and syntactic information.
+
+Measuring attention pattern changes: comparing attention patterns before and after FT on each head across all layers in LLM.
+basically for one instance, in a layer's head: 
+before and after FT, there are 2 matrices (attention patterns size: d_k * d_k where d_k is the tokens in the instance question.)
+So Each row in the matrix undergoes KL-divergence with the corresponding row in the new matrix. Then per head, score is averaged as sum of all rows divided by d_k (no. of rows). This is per instance, per-head score.
+Now, each head score is averaged across dataset by summing each head score per question and dividing by no. of questions.
+Then each layer score is averaged as sum of all head scores and then dividing by no. of attention heads.
+
+Measuring representational-level changes:
+to estimate whether task-relevent information remains encoded within different layers on FT LLMs similar to that of the pretrained model,
+a probing frameworks using logit lens is used. 
+Basically for one question, per layer the layer output is fed to LM head to get token distribution. Then for base and FT  model, the metric for Sentimental analysis is accuracy, BERTScore for Machine Translation, and SQuAD F1 for QA. Comparison is made and per layer score is averaged across questions.
+suppose for a layer, before the score is low but now the score is high indicates that this layer has gone through changes allowing an earlier output.
+
+Quantifying Causal Relevance:
+EAP comes into play here. EAP identifies the importance of each edge in an LLM, where an edge exists between a source node and a destination node (eg: outputs of previous layers and inputs of subsequent components.)
+An edge essentially consists of 2 components while doing analysis related to causal relevance, we consider the union of all components corresponding to top-k edges indentified by EAP. So I think, identify edges, take some k top edges, and basically a collection of all unique components.
+EAP assigns a score to each edge, saliency score of an edge is defined -> expected cumulative causal contribution to the task metric. To estimate this score, we corrupt an edge and observe model output. (First order taylor expansion, same as neuron scoring).
+in an ideal case, per question you would ablate each edge and see the difference but that means billions and trillions of passes. So, taylor expansion. Also, here they use logit difference, and not prob (softmax), so they do not face the problems I faced for some models. How they corrupt prompts is unclear.
+Also they use all questions and not already correct questions?
+
+Metric for Binary Sentiment classification:
+(logit_correct_target_label - max(logits of all other incorrect options)) (Claude recommended this to me for neuron scoring.)
+If an edge is important, this should reduce this difference.
+
+Metris for Generative tasks:
+Teacher-forcing, at each decoding step, logit difference between Ground truth token and highest-scoring incorrect token within the top-K predicted candidates (top 5, top 10).
+This difference is then aggregated across all n steps (average).
+Token length variation is minimal and doesnt introduce any bias.
+
+Experiment Setup:
+Sentiment -> Large Yelp Review, and Stanford Sentiment treebank.
+QA -> SQuAD and CoQA.
+Machine Translation -> KDE4 and Tatoeba.
+
+Preprocessing -> for Sentiment, to generate corrupted sentences, tokens most indicative of sentiment are masked using "<mask>", these tokens are identified by Llama-3-8B-it model.
+for QA, answer span within the context passage is replaced by "<mask>".
+For machine Translation -> all tokens in english input are made to "<mask>" to simulate maximal information loss.
+
+For EAP, top-k = 400. Using only components from top-400 edges preserves at least 90% of original task performance.
+
+FT Setup: all model params are fine-tuned in a full FT setup, i.e that all model params are updated.
+
+Results:
+presented along 3 dimensions: 1) distribution of changes induced by FT, 2) distribution of causally relevant components after FT, 3) relationship between overlap of EAP-components and cross-task performance transfer capability.
+
+Note: Induction heads are naturally existing heads created during training process. what do they do? suppose input is [A][B].....[A], output will be [B]. Example -> [Harry][Potter]....[Harry], output will be [Potter].
+
+5.1: Heterogeneity of fine-tuning dynamics
+Figure 2 (llama 1B and Qwen2). attention KL is spread across nearly all layers, while EAP is sparse, few layers carry most of the mass.
+Attention change is task and model-specific and not uniform, but entropy values say it is close to uniform across layers, but gap to entropy_EAP is high.
+
+Smaller models also change more, this seems expected too.
+
+Figure 3 (probing, black = base, red = fine-tuned), 3 observations:
+1) Early layers score is very less.
+2) Red and black overlap until intermediate layers, then fine-tuned jumps.
+3) FT raises probe performance everywhere it diverges.
+
+5.2: Localisation of EAP components
+observation 1 -> many layers contribute nothing, and entropy_EAP is lower than that of attention. EAP is limited to top-400 edges, which by itself makes the distribution sparse.
+observation 2 -> layers with biggest attention change are not the layers with biggest EAP score.
+validation -> top-400 edges alone recover about 90% of FT performance. Patching them drops performance more than Patching 400 random edges. But random edges still cause 44-67%, so that corruption is also destructive.
+
+5.3: Cross-task transfer:
+
+Figure 4 (scatter plot) x-axis is the % performance decrease on Task-2 after FT on task 1, and y-axis is overlap of two task's top 400 EAP components.
+Spearman correlation is between 0.5-0.7 so moderately high correlation, and more shared components mean more interference.
+
+Freezing shared components found in task-1 FT improves task-2 by 2-84% in nine configs.
+
+6: Causal structure:
+Figure 5/8 -> For llama-1B, MLP is about 60%, attention about 37%, logits 3 and embedding (1-3%). Qwen is more MLP-heavy, GPT-2 is roughly 50/50. MLP nodes are MLP layers and not neurons.
+Do not understand Figure 9. Induction head Jaccard doesnt include a random baseline because many overlap values can be less than random baseline.
+
+Qualitative finding -> EAP importance is sparse and attention KL is diffuse.
+
+------------------------------------------------------
+
+meeting notes:
+
+4 models (gpt2, llama1B, qwen0.5B and llama-7B)
+
+3 tasks -> sentiment, QA, machine Translation
+6 datasets.
+
+for one model, they FT on all 6 datasets so 6 FT models.
+6 comparisons.
+
+base | FT, 3 methods
+attention change -> layer wise change. (attention heads)
+representational change -> layer wise change (internal output of each layer -> LM head and see the correct option logit) 
+EAP method -> neuron attribution, ablate edges.
+
+output of one component -> input of another.
+layer_1 -> layer_2, neuron2 -> neuron3, head_5 -> neuron_7
+taylor expansion, softmax, logit_correct - max(incorrect logits)
+normal question, corrupted question.
+
+EAP identified components to attention and representational.
+task level transfer -> llama_sentimental | llama_translation, overlap of components.
+
+random seed, model training, FT, inference.
+FT -> same model | same data | different random seed.
+
+score each neuron in the model, top 2% mlp, top 1% attn. mask them, to show importance.
+bottom 1% neuron, 100 neurons -> steer them, one accuracy, second mask them after steering them drop.

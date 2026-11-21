@@ -1,0 +1,253 @@
+On the Role of attention heads in large language model safety
+
+pre-requisite:
+
+what is an attention head?
+So initially, in an encoder/decoder block, in the self-attention layer, with only one
+WQ, WK, WV matrix to make K, V, Q vectors, because of how models learn, the highest attention score
+for a token at a position was assigned to that token only. So, instead each layer has mulitple (WQ, WH, WV matrices) to make multiple K, Q, V vectors.
+Their output is concatenated and multiplie with a new WO matrix (learned in training) to make output.
+
+Modern LLMs, have only decoders, each block is one layer (one attn and one FFN). Each layer has multiple attn heads.
+For eg, (32 layers and 32 Q heads, so total 1024 heads (head = Qi, Ki, Vi)). This is normal MHA.
+
+There is also something called Grouped Query Attention, here 4 Query heads in one layer share one K and V head.
+Even here, heads = 1024 (considered.)
+
+When papers talk about ablating/modifying heads, they mean this function f(Qi, Hi, Vi).
+So, destroying a head means turning the value of this function to 0.
+In GQA, head = f(Qi, Ki, Vi), but 4 Q share one K and V, so even here this function is turned to 0, but the K, V outputs can still be used by another head.
+
+Now, to the paper.
+
+ABSTRACT:
+
+llms achieve SOTA performance on natural language tasks, multiple languages.
+Still, their safety guardrails can be circumvented, leading to harmful generations.
+Recent research on supressing safety representations of llms, to compromise safety. However, existing research overlooks impact of multi-head attn mechanisms.
+This is the research gap and novelty.
+
+Novel metric -> Ships (Safety head ImPortant Score), an individual head's contribution to model safety.
+Algorithm is Safety Attention Head AttRibution Algorithm (Sahara).
+
+Result: (Llama-2-7B-chat), ablating one head allows model to respond to 16 times more harmful queries, (params modified is only 0.006%, previous studies modify 5%).
+Demonstrate that attn heads function as feature extractors for safety, models fine-tuned from base share safety heads.
+
+INTRO:
+despite increase in LLMs capabilites while learning from larger pre-training datasets, llms may respond to harmful queries, generating unsafe and toxic content.
+llm mech interp (for safety) is currently done through features, neurons, layers, and params, but MHA is ignored, which is crucial in other abilities.
+Why? transferring attn head methods to safety is challenging, because of difference in components and representations. Also, some  approaches require only one forward pass to observe changes, but safety tasks need full generation.
+
+Ships scores to attribute the safety capability of individual attention heads. This is done by causal tracing, (quantifying the impact of each attn head on the change in the rejection prob of harmful queries.)
+(Basically a very similar thing to CULNIG and IndicCulNeuro). Three harmful query datasets are used.
+Llama-7b-chat -> from 0.04 to 0.64 (attack success rate (ASR)), and for vicuna-7b-v1.5 (0.27 to 0.55)
+
+insights:
+ 1. certain safety heads in attn mechanism are crucial for feature integration in safety tasks.
+ 2. Fine-tuned LLMs from same base model, the safety heads overlap -> indicating that in addition to alignment, safety impact of the base model is critical.
+ 3. Attention heads that affect safety can act independently with affecting helpfulness little. This Basically means some heads are only useful for harmful query-stopping, and not general model capability.
+
+PRELIMINARY:
+LLMs are decoder only, predict next token for the given prompt.
+for an input sequence [x1, x2, .... xn], llms return the probability distribution of next token, (basically, torch.softmax(logits[:, -1, :]))
+
+Iterating this process gives response R = (xn + 1, xn + 2, ......)
+
+Multi-head attention is important. individual heads in MHA contribute distinctively across various tasks.
+
+LLM safety and jailbreaks -> safety alignment implemented to prevent models from responding to harmful queries.
+LLM params (theta) are trained to optimize the objective,
+
+min(-log p (rejection of model | harmful queries)), basically optimization of params such that the -logp is minimum (loss), hence the P(reject | harmful query) itself is very high [probability of rejection given harmful query].
+
+rejection response includes phrases such as "I cannot", "As a responsible AI".
+Objective of jailbreak: maximize probability that flags model response as harmful. D(R) is a classifer that tells if R (response is harmful).
+Basically telling make the model respond harmful things when input is harmful inspite of training.
+
+Prior studies show shifting probability distribution towards affirmative tokens can improve ASR (attack success rate). Supressing rejection tokens yield same output.
+
+Safety params: those params whose ablation leads to increase in probability of generating harmful response when harmful queries are passed.
+
+Ships (Safety head important score)
+aim is to identify safety parameters within the multi-head attn mechanisms for a specific harmful query.
+
+Priot studies employ head ablation by setting head outputs to 0.
+Contribution of ith head is ablated by modifying the parameter matrices.
+This paper, they enhance the tuning of Wq, Wk, Wv to get a finer degree of control over the influence that a particular head exerts on safety.
+Done by 2 methods, 1) undifferentiated attention and 2) scaling contribution.
+Both methods involve multiplying that parameter matrix by a very small co-efficient (epsilon) to get abalation.
+
+1) undifferentiated attention: scaling Wk or Wq matrix forces the attention weights of the head to turn to a special matrix A.
+A -> lower triangular matrix, a[i, j] = (1/i) for i >= j or 0.
+(for eg,  [1,   0,   0]
+          [1/2, 1/2, 0]
+          [1/3, 1/3, 1/3])
+
+Modifying either Wq or Wk have equivalent effects. this method achieves ablation by hindering the head from extracting critical information from input.
+
+h(modifed) = softmax((epsilon * Wq * Wk_transpose) / d**0.5)*Wv, can also be written as A*WQ, A is the lower triangular matrix.
+
+2) Scaling contribution: here the eplison is multiplied to Wv matrix. When outputs of all heads are concatenated and multiplied with Wo, the contribution of hi(modified) is significantly diminished.
+So, obv this is AFTER they identify the heads to ablate, and instead of simply making the attn head to 0, they multiply all 3 matrices in some way with epsilon to diminish the output.
+Comparison on these 2 methods and simply making (h = 0) can be done.
+
+Ships: for a model with l layers, they ablate the head(i, l) in the MHA of the l-th layer based on the 2 methods.
+Ships score can be defined as the kullback-leibler divergence between the original probability distribution with the head, and the new distribution without the head.
+Ok, so they ablate first and then see the divergence and then assign a score.
+
+the probability distribution of an llm token is DISCRETE (array of logit softmax).
+
+KL divergence formula for 2 discrete sets(P, Q) -> summation of (P(i) * (log(P(i) / log(Qi)))).
+For ships, P is the original distribution, Q is the ablated distribution.
+
+language models tend to be sparse, with redundant params, meaning ablating some heads often has minimal impact on performance. 
+So, when a head is ablated, any deviation from the original rejection distribution is mostly likely because the head is a safety head.
+
+question: They use KL divergence per head per question, but they use .generate (and not logit option matching, so how do they use KL divergence per question for so many tokens?)
+ans -> KL divergence is kind of used only for the next token generation, model.generate() does not use KL divergence, they only see which ablated head causes the biggest/only shift in prob distribution and label it "important".
+
+This may cause some problems, as a head responsible for fluent formatting may als get a big score, so these heads are responsible for these exact prompts, and not "safety" as a whole.
+A better analysis would be to also ablate same head for a generic question and see if the head is responsible for that too.
+
+A next step would be to make a list of negative words such as ["sorry", "cannot", "harmful"], and positive word list ["sure", "here", "yes"], and for a head ablation, see if the prro distribution shifts from negative tokens to positive tokens.
+
+
+3.3:
+preliminary experiment to show Ships can be used to identify safety heads.
+Two models: llama-2-7B-chat, and Vicuna-7B-v1.5.
+Three datasets: Advbench, Jailbreakbench, and Malicious Instruct.
+
+After ablating the identified safety head for a specific query(harmful), an output of 128 tokens is generated.
+Greedy sampling and top-k sampling used, and ASR (attack success rate) is used.
+for llama, ablating the most important head per query improves average ASR from 0.04 to 0.64 (for "template").
+For vicuna, ablating the most important head per query improves from (0.27 to 0.55).
+One head for llama is only 0.006% of all params.
+
+In both models, undifferentiated attention outperforms scaling contribution in terms of impact on safety.
+
+
+Till now this was ablation at the question level, now discussion will be on the dataset level.
+
+"In Section 3, we present Ships to attribute safety attention head for specific harmful queries and
+demonstrated its effectiveness through experiments. In this section, we extend the application of
+Ships to the dataset level, enabling us to separate the activations from particular queries. This
+allows us to identify attention heads that consistently apply across various queries, representing
+actual safety parameters within the attention mechanism."
+
+section 4: SAFETY ATTENTION HEAD AttRibution Algorithm (sahara)
+4.1 -> evaluation of safety representations across entire datasets.
+4.2 -> generalized version of Shipsm and Sahara (heuristic version for pinpointing heads.)
+4.3 -> experiments.
+
+4.1 Generalize the impact of safety head ablation
+
+previous studies show residual stream activations (denoted as a), included features for safety.
+SVD (Singular Value Decomposition) -> used for feature extraction, can be used to identify safety-critical features via left Singular matrices.
+
+This paper collects activation a of the top layer of a model across a dataset. Stacking (activation a) of all questions (harmful) into a matrix M, and then apply SVD to M.
+SVD(M) = U(sigma)(v_transpose). here U is orthogonal (transpose = inverse), dimensions = (number of questions * dimension_k), representing key feature in the representation space of query dataset.
+d_k = hidden dimension of top layer activation (4096 for both models.)
+
+So this is wrong by the authors (lmao).
+U is (Q_h * Q_h), M = (Q_h * d_k), and V = (d_K * Q_h).
+What U actually is a query space, each row (one question) and each number in each row denotes the weight of the pattern (column) represented by that question.
+V is actually the feature space.
+The paper does not use V (it could have).
+
+Now the paper first obtains U0 on the vanilla model for each dataset.
+Then it finds U_A from a model where one attention head from any layer but Matrix made from last layer.
+Then principle angles between U0 and U_A, if angle is larger, it indicates more significant alterations in safety representation.
+
+Given that first r dimensions from SVD capture most prominent features, only first r columns are used to calculates principle angles.
+for r = 1, its a line, so angle is cos_inv(singular value, which is cosine similarity.)
+for r = 2, 2 lines make a plane, so we see the rotation of the vanilla plane to the ablated plane.
+for r = 3, we see in 3d space, r = 4, 4d space and so on.
+
+They add angles from r1, r2, r3..... r_n. -> this is the Ships score for a model for one dataset, for one head, the head with the max score is the safety head.
+They did not choose the easy way which was aggregating ship_score per query for each head and averaging out, and maybe could have compared against it for a nice baseline.
+
+4.2 Sahara
+existing research indicates that components within LLMs have synergistic effects. Such collaborative dynamics are confined to interactions among attention heads.
+To explore this, the paper introduces a search strategy to identify groups of safety heads that function "in concert"(together).
+
+Sahara is a heuristic search Algorithm to identify a group of heads that are collectively responsible for detecting and rejecting harmful queries.
+
+so, a size S is set for the important head group G.
+G is initally null set.
+for each size from 1 till S,
+    a scoreboard is initialised.
+    for each layer, and each head,
+    T is a temp set that is G union the head at l layer and N index.
+    T is ablated and Ships score is added to scoreboard.
+
+at end of each loop, G is updated with the max score in scoreboard.
+
+Basically, for S = 3,
+G = {}
+s = 1, all of 1024 heads are ablated, score is added to scoreboard, say h_a is top scorer.
+G = {h_a},
+s = 2, again the pair of (h_a, all 1024 heads) are ablated, {(h_a, head_1), (head_a, head_2).....(head_a, head_1024)} -> ablated, score added to scoreboard. 
+say pair (h_a, h_b) is top scorer, so G now becomes (h_a, h_b)
+this goes till S.
+
+this is greedy search, picking the top inidivual scorer may not mean the group is the most important for safety.
+Exhaustive search will give the best group, but even for S = 3, that means about 180 million ablations, which takes years on even frontier GPUs.
+we can take the top 30 heads by Ships score, and then find all the triplets among them.
+that can be a nice comparison.
+
+the paper says S does not exceed 5.
+
+4.3 
+How does safety heads affect safety?
+ablating heads results in safety degradation. 
+
+4.1 results: 
+for vicuna, across benchmarks vannila ASR is 0.3, which goes to to 0.5 on ablating 1 head, same for 2 heads, but on ablating 3 heads, Jailbreakbench ASR goes to 0.7 but MaliciousInstruct drops to 0.5, and then the ASR remains stable.
+For llama, ASR is (on avg) 0.04/0.03 and shoots to 0.65 on one head, it goes up to 0.7 on 3 heads and then drops a bit on further ablation.
+
+Figure 4B shows that for the two datasets, changes in ASR rates occurs only in 3-5 heads per set, rest all are redundant for safety.
+
+Summary: 3 heads is the sweet number for maximum ASR, after 3 heads, the models output nonsense strings that count as ASR failures.
+Safety heads are sparse -> only 3-4 heads matter.
+
+This method localises safety at a finer granularity:
+previous research (ActSVD, GTAC, DAP and LSP) also identify safety params, But this work has the finest and least model modification that also provides a similar ASR.
+Param modification is 0.0018% compared to 3-5% for other papers. Other papers work on Rank, neurons, Layers.
+
+This method is also highly efficient. Takes only 6 GPU hours on an A100(80 GB) while some other methods working on heads take upto 850 hours.
+
+Section 5
+
+5.1 (Different impact between attention weight and attention output)
+Difference between undifferentiated attention and scaling contribution.
+
+undifferentiated attention diminishes safety at a much greater scale than scaling contribution, (Wq or WK does not matter), in both dataset and query level.
+Scaling contribution for dataset level shows hardly any difference (0.02 mean), but at individual question levels, the difference is 0.25, less then undiff but still a lot more.
+
+attention weight and attention output do not overlap in terms of top heads. Top heads using attention weight show greater consistency across datasets than scaling contribution.
+
+5.2 (pre training is important for llm safety)
+the base model and instruct model share a lot of heads that are important for safety.
+Llama-2-7B-chat and vicuna are finetuned versions of llama-2-7B, and even these 2 models share a lot of safety heads.
+
+a new experiment is done:
+attention params (heads) of the base model but other params of the chat model.
+The concat model retains safety capability close to the aligned model.
+
+5.3 (helpful harmless trade off)
+lm-eval is used with benchmarks like BoolQ, RTE, WinoGrande, Arc-challenge, OpenBookQA.
+ablating safety heads causes little to no degradation on general model performance.
+
+Conclusion:
+his work introduces Safety Head Important Scores (Ships) to interpret the safety capabilities of
+attention heads in LLMs. It quantifies the effect of each head on rejecting harmful queries to offers
+a novel way for LLM safety understanding. Extensive experiments show that selectively ablat-
+ing identified safety heads significantly increases the ASR for models like Llama-2-7b-chat and
+Vicuna-7b-v1.5, underscoring its effectiveness. This work also presents the Safety Attention Head
+Attribution Algorithm (Sahara), a generalized version of Ships that identifies groups of heads whose
+ablation weakens safety capabilities. Our results reveal several interesting insights: certain attention
+heads are crucial for safety, safety heads overlap across fine-tuned models, and ablating these heads
+minimally impacts helpfulness. These findings provide a solid foundation for enhancing model
+safety and alignment in future research.
+
+APPENDIX

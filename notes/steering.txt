@@ -1,0 +1,145 @@
+Identifying and Transferring Reasoning-Critical Neurons: Improving LLM
+Inference Reliability via Activation Steering
+
+abstract: post-training, RAG, etc is computationally expensive.
+They show a small subset of neurons in LLMs exhibit positive correlations with Reasoning correctness.
+AdaRAS -> lightweight test-time framework that improves reasoning Reliability by selectively intervening on neuron Activations.
+method identifies Reasoning Critical Neurons via polarity-aware mean-difference criterion and adaptively steers Activations during interference, enhancing incorrect reasoning traces and stopping degradation on already correct ones.
+Experiments on 10 maths and coding benchmarks show 13% gains on AIME-24 and AIME-25. method also shows strong Transferability across datasets and scalability to stronger models.
+
+2.1 Task formulation:
+Reasoning-critical neurons -> neurons who positively contribute to correct reasoning outcomes.
+Given a dataset D = {{x, y, | x -> input and y -> answer}} and a reasoning model M, r = model generated reasoning trace for input x, and a = final answer generated.
+So binary correctness label c = [a - y], which is the target singal throughout this work. This work focuses on MLP blocks, intermediate activation for each MLP block as internal representation.
+
+2.2 LLM reasoning signatures:
+can reasoning correctness be inferred directly from intermediate neuron activations?
+preliminary study -> probe last-token activations of Qwen3 series models, on maths datasets (AIME, AMC-12) to assess predictive power for reasoning Reliability. 
+
+Appendix A (preliminary study of probing):
+
+1. construction of contrastive datasets consisting of paired correct and incorrect reasoning trajectories for each input. Using Qwen3 models (1.7B, 4B), they extract last-token activation values across all layers as input features for probing classifiers.
+All samples are randomly partioned into training/test sets with 4:1 ratio.  
+2. binary classifiers is trained to predict reasoning correctness from last-token activations. 
+3. F-statistic-based feature selection is used to identify most discriminative neurons.
+
+A.1 (Data construction)
+Qwen3-32B is used to generate constrastive reasoning trajectories. AIME (24 + 25) and AMC-12, 8 reasoning traces per question using generation temperature of 1.0
+Retained only those questions that yield a balanced outcomes of exactly 4 correct and 4 incorrect trajectories. This condition gets them 15 AIME problems (from 60 questions) and 13 AMC-12 problems (from 104),
+so 120 and 104 samples, respectively.
+
+A.2 (Pre-processing)
+for each reasoning trace, last-token activations across all neurons is extracted as input features for classifier.
+Source -> Hidden states of last token in reasoning path, immediately before answer generation.
+Position -> Post-activation outputs of MLP blocks (after SwiGLU activation for Qwen3 model).
+Dimension -> single vector L * d(mlp) (L = layers).
+normalization -> values are divided by  (10 * standard deviation for each neuron computed over training set).
+
+A.3 (Probing classifier)
+feature selection using ANOVA F-statistic based on linear association with correctness label, and select top-K neurons (K = 131,072). Logistic Regression as classifier.
+
+This paper, for doesnt do a great job of explaining the preliminary Experiment:
+so Logistic Regression (input) is 130k number vector, one per one trace, and output is wrong/right. (question answered correctly or incorrectly).
+Basically they are trying to see if using a naive-deterministic classifier, can the model's internal state be used to predict output, and if yes, it shows that neurons behave differently when generating right/wrong output on same question.
+the AUROC is about 67-76% on all models, all data so it is decent but the dataset size is less.
+
+My doubt? Why use traces of Qwen3-32B on lower models, Qwen3-1.7B gets 48% COT accuracy on Math datasets, so its own traces can be used for this Experiment. Maybe they wanted more complete and lengthy traces? who knows.
+Passing 32B model traces to lower model Basically means asking question "Does this text seem right?"
+
+Main paper:
+Finding 1: reasoning traces leading to correct/incorrect answers exhibit distinct activation patterns. Figure-2 shows some neurons capture informative signals associated with reasoning succcess. Some show during reasoning failure.
+
+Finding 2: Token-level neuron activation are predictive of final correctness of LLM reasoning: as showed in table 1, the AUROC shows decent correlations.
+
+3 methodology:
+1. identify RCNs (reasoning critical neurons) by contrasting activation patterns from correct and incorrect reasoning samples.
+2. Apply sparse activation steering to selectively intervene on these neurons.
+3. to avoid pertubing already-correct reasoning, they use an adaptive intervention strat that conditionally modulates activations at test time.
+
+3.1 
+RCNs identified by directly contrasting activation patterns between correct and incorrect reasoning trajectories. method is probe-free.
+reasoning-critical score = mean over all pairs of traces of (average activation across tokens for correct trace - average activation across tokens for incorrect trace)
+for Each layer, scores of all neurons form a layer wise vector, which serves as steering direction.
+
+3.2
+from preliminary results, key observation ->  correct reasoning is supported by structured activation patterns formed by small subset of neurons, and not uniform distribution across entire layers.
+thus, instead of intervening at layer level, we perform neuron selection and steering.
+emipirical analysis -> neurons whose average activation polarity differs between correct and incorrect reasoning trajectories are discriminative. Such neurons actively support or suppress valid reasoning.
+thus, steering only if score_for_true * score_for_negative < 0.
+this reveals sparse set.
+
+rank neurons by magnitude of importance score, select top-K neurons to construct sparse steering vector per layer.
+only down_proj neurons are steered.
+
+So for each selected neuron i, its activation becomes a_i + α·S(l,i), and all other neurons are unchanged. The shift is applied before W_down, and it happens at every decoding step, with the same constant shift at every token.
+
+3.3
+they use early neuron activations induced by prompt, use F-statistics to reduce Dimension, and use an attention-based classifier (AUROC = 0.8347) to classify if it will fail or not. Only if it fails, then the steering is applied.
+
+4 Experiments
+Datasets -> 10 datasets. (AIME, AMC, GSM8K, MBPP+). For datasets lacking an official training split, they partition data into small probing set and remaining set reserved for test-time steering eval.
+For each probing sample, we generate 4 pairs of positive and negative reasoning traces to identify RCNs.
+
+Baseline: following baselines:
+1) Chain-of-Thought (CoT) (vanilla CoT prompting performance of Qwen3-1.7B as baseline).
+2) Post-trained Reasoning models -> methods like (SFT, PPO, GRPO). 3 models are considered with comparable scales:
+DeepSeek-R1-Distill-Qwen-1.5B, Openthinker3-1.5B and OpenReasoning-nemotron-1.5B
+
+3) Probing-based steering -> we use the weights of probing classifier trained as neuron importance score, select same number of top-ranked neurons as in AdaRAS, and perform activation addition steering. This is called as Probing.
+
+Evaluation -> all methods are evaluated under same greedy decoding setup for fair comparison. (Appendix C.2) Accuracy as metric across datasets.
+
+4.2 Main results
+AdaRAS consistently improves reasoning correctness across all datasets, even surpassing post-trained LLMs.
+On avergae, AdaRAS achieves an improvement of ~5% over CoT-based inference. Notably, on the challenging AIME-25 benchmark AdaRAS makes a gain of 13.64% surpassing all existing open-source post-trained models of comparable scale.
+AdaRAS avg improvement (9.11%) on AIME, AMC (tough benchmarks). On average benchmarks, gain is moderate 2.26%. These suggests that steering RCNs activations toward favourable states can substantially enhance the Reliability of generation process, particularly for complex and cognitively demanding reasoning tasks.
+
+Probing-based activation steering is inherently unstable:
+it gets mixed results across datasets. It gets notable gains on AMC-12, even more then AdaRAS, it fails to generalize and can be detrimental on some more challenging benchmarks.
+On AIME-24, It degrades accuracy by 4% compared to CoT Baseline.
+This indicates that naive probing based approaches are highly sensitive to neuron selection, and may harm reasoning performance without adaptive intervention mechanism.
+
+4.3 generalizability
+RCNs exhibit strong cross-dataset and cross-task Transferability.
+Table 3 -> RCNs identified on AIME get better performance on other datasets than those identified on the datasts themselves.
+(Example -> RCN identified on Math-500 gets x on Math-500, RCN identified on AIME gets x + 1 on Math-500).
+task transfer -> coding benchmarks also work well. This suggests that neurons capture task-agnostic reasoning mechanism.
+
+AdaRAS scales effectively, even on qwen3-4B this method works.
+
+4.4 Ablation studies:
+1) random steering consistently degrades performance.
+2) removing mean difference based estimation results in sharpest decline on AIME-24 (from 60 to 43).
+3) disabling polarity based selection causes 10% drop.
+4) omitting adaptive intervention degrades overall performance.
+
+hyper-param (alpha):
+peak performance on 0.3/0.4, more than this leads to performance decline.
+at 0.7, performance drops to below baseline. top-k is peak at 50, at 2000, performance drops.
+
+visualization of steering:
+AdaRAS mainly intervenes on layer layer neurons.
+
+example of working:
+
+Base Model (Failed):
+... We derive the expression for the diagonal squared
+as BD2 = 80 + 22
+3 d2. Since d2 ≥ 0, the expres-
+sion is always greater than 80. As d → 0, BD2
+approaches 80. Therefore, the greatest real number
+less than BD2 is 80 .
+
+AdaRAS (Success):
+... We derive the expression BD2 = 80 + 22
+3 d2.
+However, the vertices must lie on the hyperbola.
+Solving the system for the rhombus vertices (c,0)
+and (0,d) yields the constraint that d2 cannot be
+zero. Specifically, the minimum value is found to
+be d2 = 600
+11 . Substituting this into the expression:
+BD2 = 80+ 22
+3 ·600
+11 = 480. Thus, the greatest real
+number is 480 .
